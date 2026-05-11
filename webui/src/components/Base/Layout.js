@@ -19,7 +19,7 @@ const propTypes = {
 }
 
 const defaultProps = {
-  title: `Open5GS ${Package.version}`
+  title: `ConnexInsights Boardband Radio Services ${Package.version}`
 }
 
 const Layout = ({ title, children }) => (

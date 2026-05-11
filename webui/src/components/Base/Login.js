@@ -168,7 +168,7 @@ const Login = ({
 }) => (
   <div>
     <Head>
-    <title>Open5gs - Login</title>
+    <title>ConnexInsights Boardband Radio Services - Login</title>
     </Head>
     <Wrapper id='nprogress-base-login' width={width}>
       <ErrorBar 
