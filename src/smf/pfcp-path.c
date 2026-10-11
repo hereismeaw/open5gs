@@ -291,6 +291,10 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
+    /* The delayed indirect tunnel REMOVE, if this is it, is gone */
+    if (sess->handover.indirect_remove_xact_id == xact->id)
+        sess->handover.indirect_remove_xact_id = OGS_INVALID_POOL_ID;
+
     switch (type) {
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
         ogs_warn("No PFCP session establishment response");
@@ -427,6 +431,7 @@ static void qos_flow_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
 static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
 {
     smf_sess_t *sess = NULL;
+    smf_bearer_t *bearer = NULL;
     ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
     uint8_t type;
 
@@ -448,6 +453,11 @@ static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
         ogs_warn("No PFCP session establishment response");
         break;
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
+        if (xact->modify_flags & OGS_PFCP_MODIFY_ERROR_INDICATION) {
+            bearer = smf_default_bearer_in_sess(sess);
+            if (bearer)
+                bearer->ei_deactivation = false;
+        }
         ogs_error("No PFCP session modification response");
         break;
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
@@ -480,6 +490,9 @@ static void bearer_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
 
     switch (type) {
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
+        if (xact->modify_flags &
+                (OGS_PFCP_MODIFY_ERROR_INDICATION|OGS_PFCP_MODIFY_REMOVE))
+            bearer->ei_deactivation = false;
         ogs_error("No PFCP session modification response");
         break;
     default:
@@ -638,6 +651,15 @@ int smf_5gc_pfcp_send_all_pdr_modification_request(
     xact->modify_flags = flags | OGS_PFCP_MODIFY_SESSION;
     xact->delete_trigger = trigger;
 
+    /*
+     * The delayed REMOVE of the indirect tunnel after handover completion.
+     * ngap_handle_handover_request_ack() reuses it if the next handover
+     * starts before it is answered.
+     */
+    if (duration &&
+        (flags & OGS_PFCP_MODIFY_INDIRECT) && (flags & OGS_PFCP_MODIFY_REMOVE))
+        sess->handover.indirect_remove_xact_id = xact->id;
+
     ogs_list_init(&sess->pdr_to_modify_list);
     ogs_list_for_each(&sess->pfcp.pdr_list, pdr)
         ogs_list_add(&sess->pdr_to_modify_list, &pdr->to_modify_node);
@@ -690,7 +712,7 @@ int smf_5gc_pfcp_send_one_qos_flow_modification_request(
     smf_sess_t *sess = NULL;
 
     ogs_assert(qos_flow);
-    sess = smf_sess_find_by_id(qos_flow->id);
+    sess = smf_sess_find_by_id(qos_flow->sess_id);
     ogs_assert(sess);
 
     xact = ogs_pfcp_xact_local_create(
@@ -1047,6 +1069,38 @@ int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause)
                         "failed");
                 return OGS_ERROR;
             }
+        }
+        break;
+
+    case OGS_GTP2_CAUSE_REACTIVATION_REQUESTED:
+        /*
+         * GTP-U Error Indication on the default bearer (TS 23.007):
+         * deactivate all bearers of this PDN connection. The PFCP
+         * modification response then sends a Delete Bearer Request for the
+         * default bearer (Linked EBI) to the SGW-C/MME.
+         *
+         * The "Reactivation requested" cause is used so the MME maps it to
+         * NAS ESM cause #39 "reactivation requested" (3GPP TS 29.274
+         * clause 7.2.9.2 and Table C.3), instructing the UE to re-establish
+         * the PDN connection (e.g. the IMS PDN for VoLTE) instead of just
+         * deactivating it.
+         */
+        if (ogs_list_first(&sess->bearer_list) == NULL) {
+            ogs_error("No Bearer List in Session");
+            return OGS_ERROR;
+        }
+
+        /* Deactivate this PDN connection */
+        rv = smf_epc_pfcp_send_all_pdr_modification_request(
+                sess, OGS_INVALID_POOL_ID, NULL,
+                OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE|
+                OGS_PFCP_MODIFY_ERROR_INDICATION,
+                OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                OGS_GTP2_CAUSE_REACTIVATION_REQUESTED);
+        if (rv != OGS_OK) {
+            ogs_error("smf_epc_pfcp_send_all_pdr_modification_request() "
+                    "failed");
+            return OGS_ERROR;
         }
         break;
 

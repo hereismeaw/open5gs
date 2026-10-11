@@ -150,6 +150,8 @@ extern "C" {
 
 #define OGS_SBI_RESOURCE_NAME_PCF_BINDINGS          "pcfBindings"
 
+#define OGS_SBI_RESOURCE_NAME_EQUIPMENT_STATUS      "equipment-status"
+
 #define OGS_SBI_RESOURCE_NAME_EXCHANGE_CAPABILITY   "exchange-capability"
 
 #define OGS_SBI_PATCH_PATH_NF_STATUS                "/nfStatus"
@@ -359,6 +361,8 @@ extern "C" {
 #define OGS_SBI_PARAM_IPV6PREFIX                    "ipv6Prefix"
 #define OGS_SBI_PARAM_HOME_PLMN_ID                  "home-plmn-id"
 #define OGS_SBI_PARAM_HNRF_URI                      "hnrf-uri"
+#define OGS_SBI_PARAM_PEI                           "pei"
+#define OGS_SBI_PARAM_SUPI                          "supi"
 
 #define OGS_SBI_PARAM_FIELDS_GPSIS                       "gpsis"
 #define OGS_SBI_PARAM_FIELDS_SUBSCRIBED_UE_AMBR          "subscribedUeAmbr"
@@ -458,7 +462,7 @@ typedef struct ogs_sbi_discovery_option_s {
     char *requester_nf_instance_id;
 
     int num_of_service_names;
-    char *service_names[OGS_SBI_MAX_NUM_OF_SERVICE_TYPE];
+    OpenAPI_service_name_e service_names[OGS_SBI_MAX_NUM_OF_SERVICE_NAME];
 
     int num_of_snssais;
     ogs_s_nssai_t snssais[OGS_MAX_NUM_OF_SLICE];
@@ -528,6 +532,9 @@ typedef struct ogs_sbi_message_s {
 
         char *ipv4addr;
         char *ipv6prefix;
+
+        char *pei;
+        char *supi;
 
         bool home_plmn_id_presence;
         ogs_plmn_id_t home_plmn_id;
@@ -600,6 +607,7 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_app_session_context_t *AppSessionContext;
     OpenAPI_app_session_context_update_data_patch_t
         *AppSessionContextUpdateDataPatch;
+    OpenAPI_termination_info_t *TerminationInfo;
     OpenAPI_sm_policy_notification_t *SmPolicyNotification;
     OpenAPI_termination_notification_t *TerminationNotification;
     OpenAPI_deregistration_data_t *DeregistrationData;
@@ -612,6 +620,7 @@ typedef struct ogs_sbi_message_s {
     OpenAPI_ue_context_transfer_rsp_data_t *UeContextTransferRspData;
     OpenAPI_ue_reg_status_update_req_data_t *UeRegStatusUpdateReqData;
     OpenAPI_ue_reg_status_update_rsp_data_t *UeRegStatusUpdateRspData;
+    OpenAPI_eir_response_data_t *EirResponseData;
 
     ogs_sbi_links_t *links;
 
@@ -657,6 +666,7 @@ void ogs_sbi_message_final(void);
 void ogs_sbi_message_free(ogs_sbi_message_t *message);
 
 ogs_sbi_request_t *ogs_sbi_request_new(void);
+ogs_sbi_request_t *ogs_sbi_request_new_incoming(void);
 void ogs_sbi_request_free(ogs_sbi_request_t *request);
 ogs_sbi_request_t *ogs_sbi_build_request(ogs_sbi_message_t *message);
 int ogs_sbi_parse_request(
@@ -669,8 +679,7 @@ ogs_sbi_response_t *ogs_sbi_build_response(
 int ogs_sbi_parse_response(
         ogs_sbi_message_t *message, ogs_sbi_response_t *response);
 
-#define ogs_sbi_header_set(ht, key, val) \
-    ogs_hash_set(ht, ogs_strdup(key), strlen(key), ogs_strdup(val))
+void ogs_sbi_header_set(ogs_hash_t *ht, const char *key, const char *val);
 #define ogs_sbi_header_get(ht, key) \
     ogs_hash_get(ht, key, strlen(key))
 
@@ -697,10 +706,10 @@ void ogs_sbi_discovery_option_set_dnn(
 
 void ogs_sbi_discovery_option_add_service_names(
         ogs_sbi_discovery_option_t *discovery_option,
-        char *service_name);
+        OpenAPI_service_name_e service_name);
 char *ogs_sbi_discovery_option_build_service_names(
         ogs_sbi_discovery_option_t *discovery_option);
-void ogs_sbi_discovery_option_parse_service_names(
+int ogs_sbi_discovery_option_parse_service_names(
         ogs_sbi_discovery_option_t *discovery_option,
         char *service_names);
 
@@ -708,21 +717,21 @@ void ogs_sbi_discovery_option_add_snssais(
         ogs_sbi_discovery_option_t *discovery_option, ogs_s_nssai_t *s_nssai);
 char *ogs_sbi_discovery_option_build_snssais(
         ogs_sbi_discovery_option_t *discovery_option);
-void ogs_sbi_discovery_option_parse_snssais(
+int ogs_sbi_discovery_option_parse_snssais(
         ogs_sbi_discovery_option_t *discovery_option, char *snssais);
 
 void ogs_sbi_discovery_option_set_guami(
         ogs_sbi_discovery_option_t *discovery_option, ogs_guami_t *guami);
 char *ogs_sbi_discovery_option_build_guami(
         ogs_sbi_discovery_option_t *discovery_option);
-void ogs_sbi_discovery_option_parse_guami(
+int ogs_sbi_discovery_option_parse_guami(
         ogs_sbi_discovery_option_t *discovery_option, char *guami);
 
 void ogs_sbi_discovery_option_set_tai(
         ogs_sbi_discovery_option_t *discovery_option, ogs_5gs_tai_t *tai);
 char *ogs_sbi_discovery_option_build_tai(
         ogs_sbi_discovery_option_t *discovery_option);
-void ogs_sbi_discovery_option_parse_tai(
+int ogs_sbi_discovery_option_parse_tai(
         ogs_sbi_discovery_option_t *discovery_option, char *tai);
 
 void ogs_sbi_discovery_option_add_target_plmn_list(

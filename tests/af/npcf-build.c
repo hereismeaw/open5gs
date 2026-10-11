@@ -58,12 +58,13 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create(
 
     af_param = data;
     ogs_assert(af_param);
-    ogs_assert(af_param->med_type);
+    ogs_assert(af_param->med_type || af_param->qos_reference);
 
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
     message.h.service.name =
-        (char *)OGS_SBI_SERVICE_NAME_NPCF_POLICYAUTHORIZATION;
+        OpenAPI_service_name_ToString(
+                OpenAPI_service_name_npcf_policyauthorization);
     message.h.api.version = (char *)OGS_SBI_API_V1;
     message.h.resource.component[0] =
         (char *)OGS_SBI_RESOURCE_NAME_APP_SESSIONS;
@@ -79,7 +80,9 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create(
     ogs_assert(server);
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NPCF_POLICYAUTHORIZATION;
+    header.service.name =
+        OpenAPI_service_name_ToString(
+                OpenAPI_service_name_npcf_policyauthorization);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] = (char *)OGS_SBI_RESOURCE_NAME_APP_SESSIONS;
     header.resource.component[1] = (char *)sess->app_session.af.id;
@@ -135,7 +138,10 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create(
 
     MediaComponent->med_comp_n = (i++);
     MediaComponent->f_status = OpenAPI_flow_status_ENABLED;
-    MediaComponent->med_type = af_param->med_type;
+    if (!af_param->omit_med_type)
+        MediaComponent->med_type = af_param->med_type;
+    if (af_param->qos_reference)
+        MediaComponent->qos_reference = ogs_strdup(af_param->qos_reference);
     if (af_param->qos_type == 1) {
         MediaComponent->mar_bw_dl = ogs_sbi_bitrate_to_string(
                                         96000, OGS_SBI_BITRATE_BPS);
@@ -308,6 +314,8 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create(
                     ogs_free(MediaComponent->rr_bw);
                 if (MediaComponent->rs_bw)
                     ogs_free(MediaComponent->rs_bw);
+                if (MediaComponent->qos_reference)
+                    ogs_free(MediaComponent->qos_reference);
 
                 codecList = MediaComponent->codecs;
                 OpenAPI_list_for_each(codecList, node2) {
@@ -408,7 +416,11 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_update(
 
     MediaComponent->med_comp_n = (i++);
     MediaComponent->f_status = OpenAPI_flow_status_ENABLED;
-    MediaComponent->med_type = OpenAPI_media_type_AUDIO;
+    if (!af_param->omit_med_type)
+        MediaComponent->med_type = af_param->med_type ?
+            af_param->med_type : OpenAPI_media_type_AUDIO;
+    if (af_param->qos_reference)
+        MediaComponent->qos_reference = ogs_strdup(af_param->qos_reference);
     if (af_param->qos_type == 1) {
         MediaComponent->mar_bw_dl = ogs_sbi_bitrate_to_string(
                                         96000, OGS_SBI_BITRATE_BPS);
@@ -549,6 +561,8 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_update(
                     ogs_free(MediaComponent->rr_bw);
                 if (MediaComponent->rs_bw)
                     ogs_free(MediaComponent->rs_bw);
+                if (MediaComponent->qos_reference)
+                    ogs_free(MediaComponent->qos_reference);
 
                 codecList = MediaComponent->codecs;
                 OpenAPI_list_for_each(codecList, node2) {
@@ -585,6 +599,82 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_update(
             ogs_free(MediaComponentMap);
         }
     }
+    OpenAPI_list_free(MediaComponentList);
+
+    return request;
+}
+
+/*
+ * PATCH with a media component that carries only ARP
+ * (resPrio / preemptCap / preemptVuln), nothing else
+ */
+ogs_sbi_request_t *af_npcf_policyauthorization_build_update_arp(
+        af_sess_t *sess, void *data)
+{
+    ogs_sbi_message_t message;
+    ogs_sbi_request_t *request = NULL;
+
+    OpenAPI_app_session_context_update_data_patch_t
+        AppSessionContextUpdateDataPatch;
+    OpenAPI_app_session_context_update_data_t AscUpdateData;
+
+    OpenAPI_list_t *MediaComponentList = NULL;
+    OpenAPI_map_t *MediaComponentMap = NULL;
+    OpenAPI_media_component_rm_t *MediaComponent = NULL;
+
+    af_npcf_policyauthorization_param_t *af_param;
+
+    ogs_assert(sess);
+    ogs_assert(sess->app_session.pcf.resource_uri);
+
+    af_param = data;
+    ogs_assert(af_param);
+
+    memset(&message, 0, sizeof(message));
+    message.h.method = (char *)OGS_SBI_HTTP_METHOD_PATCH;
+    message.h.uri = sess->app_session.pcf.resource_uri;
+
+    message.AppSessionContextUpdateDataPatch =
+        &AppSessionContextUpdateDataPatch;
+
+    memset(&AppSessionContextUpdateDataPatch, 0,
+            sizeof(AppSessionContextUpdateDataPatch));
+    AppSessionContextUpdateDataPatch.asc_req_data = &AscUpdateData;
+
+    memset(&AscUpdateData, 0, sizeof(AscUpdateData));
+
+    MediaComponentList = OpenAPI_list_create();
+    ogs_assert(MediaComponentList);
+
+    MediaComponent = ogs_calloc(1, sizeof(*MediaComponent));
+    ogs_assert(MediaComponent);
+
+    MediaComponent->med_comp_n = 0;
+    MediaComponent->med_type = af_param->med_type ?
+        af_param->med_type : OpenAPI_media_type_AUDIO;
+    if (af_param->qos_reference)
+        MediaComponent->qos_reference = ogs_strdup(af_param->qos_reference);
+    MediaComponent->res_prio = af_param->res_prio;
+    MediaComponent->preempt_cap = af_param->preempt_cap;
+    MediaComponent->preempt_vuln = af_param->preempt_vuln;
+
+    MediaComponentMap = OpenAPI_map_create(
+            ogs_msprintf("%d", MediaComponent->med_comp_n), MediaComponent);
+    ogs_assert(MediaComponentMap);
+    ogs_assert(MediaComponentMap->key);
+
+    OpenAPI_list_add(MediaComponentList, MediaComponentMap);
+
+    AscUpdateData.med_components = MediaComponentList;
+
+    request = ogs_sbi_build_request(&message);
+    ogs_assert(request);
+
+    if (MediaComponent->qos_reference)
+        ogs_free(MediaComponent->qos_reference);
+    ogs_free(MediaComponent);
+    ogs_free(MediaComponentMap->key);
+    ogs_free(MediaComponentMap);
     OpenAPI_list_free(MediaComponentList);
 
     return request;
@@ -655,7 +745,8 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create_video(
     memset(&message, 0, sizeof(message));
     message.h.method = (char *)OGS_SBI_HTTP_METHOD_POST;
     message.h.service.name =
-        (char *)OGS_SBI_SERVICE_NAME_NPCF_POLICYAUTHORIZATION;
+        OpenAPI_service_name_ToString(
+                OpenAPI_service_name_npcf_policyauthorization);
     message.h.api.version = (char *)OGS_SBI_API_V1;
     message.h.resource.component[0] =
         (char *)OGS_SBI_RESOURCE_NAME_APP_SESSIONS;
@@ -671,7 +762,9 @@ ogs_sbi_request_t *af_npcf_policyauthorization_build_create_video(
     ogs_assert(server);
 
     memset(&header, 0, sizeof(header));
-    header.service.name = (char *)OGS_SBI_SERVICE_NAME_NPCF_POLICYAUTHORIZATION;
+    header.service.name =
+        OpenAPI_service_name_ToString(
+                OpenAPI_service_name_npcf_policyauthorization);
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] = (char *)OGS_SBI_RESOURCE_NAME_APP_SESSIONS;
     header.resource.component[1] = (char *)sess->app_session.af.id;

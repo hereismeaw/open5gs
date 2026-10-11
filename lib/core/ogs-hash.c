@@ -374,6 +374,50 @@ void *ogs_hash_get_or_set_debug(ogs_hash_t *ht,
     return NULL;
 }
 
+void ogs_hash_set_rekey_debug(ogs_hash_t *ht,
+        const void *key, int klen, const void *val, const char *file_line)
+{
+    ogs_assert(ht);
+    ogs_assert(key);
+    ogs_assert(klen);
+    ogs_assert(val);
+
+    /*
+     * Updating an existing entry with ogs_hash_set() changes only its value.
+     * Remove it first so find_entry() also installs the supplied key pointer
+     * on insertion. Neither call frees the displaced key or value.
+     * Keep ordinary ogs_hash_set() semantics unchanged for other callers.
+     */
+    ogs_hash_set_debug(ht, key, klen, NULL, file_line);
+    ogs_hash_set_debug(ht, key, klen, val, file_line);
+}
+
+bool ogs_hash_unset_if_owner_debug(ogs_hash_t *ht,
+        const void *key, int klen, const void *owner, const char *file_line)
+{
+    void *indexed = NULL;
+
+    ogs_assert(ht);
+    ogs_assert(key);
+    ogs_assert(klen);
+    ogs_assert(owner);
+
+    indexed = ogs_hash_get_debug(ht, key, klen, file_line);
+    if (indexed == owner) {
+        ogs_hash_set_debug(ht, key, klen, NULL, file_line);
+        return true;
+    }
+
+    /*
+     * A newer context has re-claimed this key (the same identity re-attached
+     * while this context was still being torn down). Leave the entry alone so
+     * the live context stays findable; clearing it would orphan that entry.
+     */
+    ogs_warn("%s: hash unset skipped: entry not owned by expected context",
+            file_line);
+    return false;
+}
+
 unsigned int ogs_hash_count(ogs_hash_t *ht)
 {
     ogs_assert(ht);
@@ -382,12 +426,37 @@ unsigned int ogs_hash_count(ogs_hash_t *ht)
 
 void ogs_hash_clear(ogs_hash_t *ht)
 {
-    ogs_hash_index_t *hi;
+    unsigned int i;
 
     ogs_assert(ht);
+    ogs_assert(ht->array);
 
-    for (hi = ogs_hash_first(ht); hi; hi = ogs_hash_next(hi))
-        ogs_hash_set(ht, hi->this->key, hi->this->klen, NULL);
+    /*
+     * Recycle entries directly through the bucket array instead of
+     * re-locating each one with ogs_hash_set(ht, key, klen, NULL).
+     *
+     * Clearing the table only needs the entries we already hold, not their
+     * hash values, so re-hashing the key here is unnecessary -- and unsafe.
+     * During teardown a key may point at memory that an owning context has
+     * already freed; hashfunc_default() reads the key byte-by-byte (and
+     * find_entry() then memcmp()s it), which is a use-after-free read on a
+     * dangling key. Walking the buckets never dereferences key contents, so
+     * a stale entry is recycled harmlessly rather than crashing the exit
+     * path. (The hash never owns the key memory, so nothing is freed here.)
+     */
+    for (i = 0; i <= ht->max; i++) {
+        ogs_hash_entry_t *he = ht->array[i];
+
+        ht->array[i] = NULL;
+        while (he) {
+            ogs_hash_entry_t *next_he = he->next;
+
+            he->next = ht->free;
+            ht->free = he;
+            he = next_he;
+        }
+    }
+    ht->count = 0;
 }
 
 /* This is basically the following...

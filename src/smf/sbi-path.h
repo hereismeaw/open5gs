@@ -103,7 +103,7 @@ bool smf_sbi_send_request(
     (SMF_UECM_STATE_DEREG_BY_N1N2 | SMF_STATE_HR)   /* 0xC3 */
 
 int smf_sbi_discover_and_send(
-        ogs_sbi_service_type_e service_type,
+        OpenAPI_service_name_e service_name,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
         smf_sess_t *sess, ogs_sbi_stream_t *stream, int state, void *data);
@@ -216,7 +216,7 @@ int smf_sbi_cleanup_session(
 
 bool smf_sbi_send_sm_context_status_notify(smf_sess_t *sess);
 
-void smf_sbi_send_pdu_session_created_data(
+bool smf_sbi_send_pdu_session_created_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream);
 void smf_sbi_send_pdu_session_create_error(
         ogs_sbi_stream_t *stream,

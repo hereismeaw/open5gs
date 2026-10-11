@@ -25,6 +25,23 @@
 #include "mme-fd-path.h"
 #include "mme-sm.h"
 
+void mme_send_delete_session_or_update_location_request(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    /* TS 23.401 5.3.2.1: authentication/NAS security (5a), optional
+     * EIR check (5b), old bearer deletion (7), then Update Location (8). */
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST &&
+        mme_sess_count(mme_ue)) {
+        mme_ue->attach_session_delete_pending = true;
+        mme_gtp_send_delete_all_sessions(enb_ue, mme_ue,
+                OGS_GTP_DELETE_SEND_UPDATE_LOCATION_REQUEST);
+        if (mme_sess_count(mme_ue))
+            return;
+        mme_ue->attach_session_delete_pending = false;
+    }
+    mme_s6a_send_ulr(enb_ue, mme_ue, 0);
+}
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     int r, xact_count;
@@ -280,7 +297,15 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                 mme_gtp_send_delete_bearer_response(
                     bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
         } else {
-            r = nas_eps_send_deactivate_bearer_context_request(bearer);
+            /*
+             * Use the NAS ESM cause carried across paging (stored when the
+             * Delete Bearer Request was received). This preserves
+             * "reactivation requested" for an ECM-IDLE UE so the (IMS) PDN
+             * connection is re-established after paging. See
+             * mme_s11_handle_delete_bearer_request().
+             */
+            r = nas_eps_send_deactivate_bearer_context_request(
+                    bearer, mme_ue->paging.esm_cause);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         }

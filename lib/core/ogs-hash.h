@@ -67,6 +67,50 @@ void *ogs_hash_get_debug(ogs_hash_t *ht,
 void *ogs_hash_get_or_set_debug(ogs_hash_t *ht,
         const void *key, int klen, const void *val, const char *file_line);
 
+/*
+ * Insert an entry, or replace BOTH the stored key pointer and its value.
+ *
+ * ogs_hash_set() keeps the original key pointer when an equal key already
+ * exists. If a new context replaces an older context with the same ID,
+ * that leaves the new value indexed by memory inside the old context.
+ * Even owner-checked removal cannot prevent that key from becoming stale
+ * when the old context is freed or its ID storage is reused. Use this
+ * operation when the replacement's key storage must replace the old one.
+ *
+ * No key or value is copied or freed. Any existing key must remain valid
+ * and unchanged until replaced by this call; afterwards the supplied key
+ * must remain valid and unchanged while indexed. val must be non-NULL;
+ * use ogs_hash_set(..., NULL) or ogs_hash_unset_if_owner() for removal.
+ *
+ * This replaces storage for the SAME key, not an old-key/new-key rename.
+ * Unindex a context's previous key before modifying its key bytes, and
+ * use ogs_hash_unset_if_owner() when later removing a displaced context.
+ * Like the other hash operations, this requires externally serialized
+ * access; the removal and insertion are not an atomic operation. Do not
+ * call this while traversing the table, as iterators may be invalidated.
+ */
+#define ogs_hash_set_rekey(ht, key, klen, val) \
+    ogs_hash_set_rekey_debug((ht), (key), (klen), (val), OGS_FILE_LINE)
+void ogs_hash_set_rekey_debug(ogs_hash_t *ht,
+        const void *key, int klen, const void *val, const char *file_line);
+
+/*
+ * Clear an entry ONLY if it still points at the expected owner.
+ *
+ * Identity-keyed tables (SUPI/SUCI/GUTI/IMSI/...) can be re-claimed by a
+ * freshly created context while an older context that holds the same key is
+ * still being torn down (re-attach races, deferred removal). A blind
+ * ogs_hash_set(ht, key, klen, NULL) in the old context's teardown would then
+ * orphan the newer entry, leaving the live context unfindable.
+ *
+ * Returns true if the entry was unset (owner matched), false if it was left
+ * in place because a newer context owns it now.
+ */
+#define ogs_hash_unset_if_owner(ht, key, klen, owner) \
+    ogs_hash_unset_if_owner_debug(ht, key, klen, owner, OGS_FILE_LINE)
+bool ogs_hash_unset_if_owner_debug(ogs_hash_t *ht,
+        const void *key, int klen, const void *owner, const char *file_line);
+
 ogs_hash_index_t *ogs_hash_first(ogs_hash_t *ht);
 ogs_hash_index_t *ogs_hash_next(ogs_hash_index_t *hi);
 void ogs_hash_this(ogs_hash_index_t *hi, 

@@ -365,6 +365,124 @@ cleanup:
     return ueid;
 }
 
+bool ogs_id_get_type_value(const char *str, char **type, char **value)
+{
+    ogs_assert(str);
+    ogs_assert(type);
+    ogs_assert(value);
+
+    *type = ogs_id_get_type(str);
+    *value = ogs_id_get_value(str);
+
+    if (!*type || !*value || !strlen(*type) || !strlen(*value)) {
+        ogs_error("Identity type or value is missing");
+        goto cleanup;
+    }
+
+    /* Reject extra '-' components that ogs_id_get_value() ignores. */
+    if (strlen(str) != strlen(*type) + 1 + strlen(*value)) {
+        ogs_error("Identity contains extra components");
+        goto cleanup;
+    }
+
+    return true;
+
+cleanup:
+    if (*type) {
+        ogs_free(*type);
+        *type = NULL;
+    }
+    if (*value) {
+        ogs_free(*value);
+        *value = NULL;
+    }
+
+    return false;
+}
+
+bool ogs_bcd_string_is_valid_n(
+        const char *bcd, size_t len, int min_len, int max_len)
+{
+    size_t i;
+
+    ogs_assert(min_len > 0);
+    ogs_assert(max_len >= min_len);
+
+    if (!bcd) {
+        ogs_warn("Missing BCD string");
+        return false;
+    }
+
+    if (len < (size_t)min_len || len > (size_t)max_len) {
+        ogs_warn("Invalid BCD string length [%zu], expected [%d..%d]",
+                len, min_len, max_len);
+        return false;
+    }
+
+    for (i = 0; i < len; i++) {
+        if (bcd[i] < '0' || bcd[i] > '9') {
+            ogs_warn("Invalid BCD character [0x%02x] at offset [%zu]",
+                    (unsigned char)bcd[i], i);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ogs_bcd_string_is_valid(const char *bcd, int max_len)
+{
+    ogs_assert(bcd);
+    ogs_assert(max_len > 0);
+
+    return ogs_bcd_string_is_valid_n(bcd, strlen(bcd), 1, max_len);
+}
+
+bool ogs_id_bcd_is_valid(
+        const char *str, const char *type, int min_len, int max_len)
+{
+    size_t type_len;
+
+    ogs_assert(type && type[0]);
+    ogs_assert(min_len > 0);
+    ogs_assert(max_len >= min_len);
+
+    if (!str) {
+        ogs_warn("Missing identity, expected type [%s]", type);
+        return false;
+    }
+
+    type_len = strlen(type);
+    if (strncmp(str, type, type_len) || str[type_len] != '-') {
+        ogs_warn("Invalid identity prefix, expected [%s-]", type);
+        return false;
+    }
+
+    str += type_len + 1;
+    return ogs_bcd_string_is_valid_n(str, strlen(str), min_len, max_len);
+}
+
+bool ogs_pei_is_valid(const char *pei)
+{
+    if (!pei) {
+        ogs_warn("Missing equipment identity");
+        return false;
+    }
+
+    if (!strncmp(pei, OGS_ID_PEI_TYPE_IMEI "-",
+                sizeof(OGS_ID_PEI_TYPE_IMEI "-") - 1))
+        return ogs_id_bcd_is_valid(pei, OGS_ID_PEI_TYPE_IMEI,
+                OGS_MAX_IMEI_BCD_LEN, OGS_MAX_IMEI_BCD_LEN);
+
+    if (!strncmp(pei, OGS_ID_SUPI_TYPE_IMEISV "-",
+                sizeof(OGS_ID_SUPI_TYPE_IMEISV "-") - 1))
+        return ogs_id_bcd_is_valid(pei, OGS_ID_SUPI_TYPE_IMEISV,
+                OGS_MAX_IMEISV_BCD_LEN, OGS_MAX_IMEISV_BCD_LEN);
+
+    ogs_warn("Unsupported PEI type; expected imei- or imeisv-");
+    return false;
+}
+
 bool ogs_pdu_session_id_is_valid(int psi)
 {
     return psi > OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED &&
@@ -372,31 +490,17 @@ bool ogs_pdu_session_id_is_valid(int psi)
 }
 
 /*
- * ogs_bcd_to_buffer() only converts bytes.  It does not validate that
+ * ogs_bcd_to_buffer() only converts bytes. It does not validate that
  * the input is a bounded decimal IMSI string, so check it first.
  */
 bool ogs_imsi_bcd_is_valid(const char *imsi_bcd)
 {
-    int i, len;
+    return ogs_bcd_string_is_valid(imsi_bcd, OGS_MAX_IMSI_BCD_LEN);
+}
 
-    ogs_assert(imsi_bcd);
-
-    len = strlen(imsi_bcd);
-    if (len == 0 || len > OGS_MAX_IMSI_BCD_LEN) {
-        ogs_error("Invalid IMSI BCD length [%d:%s]",
-                len, imsi_bcd);
-        return false;
-    }
-
-    for (i = 0; i < len; i++) {
-        if (imsi_bcd[i] < '0' || imsi_bcd[i] > '9') {
-            ogs_error("Invalid IMSI BCD digit [%d:%c:%s]",
-                    i, imsi_bcd[i], imsi_bcd);
-            return false;
-        }
-    }
-
-    return true;
+bool ogs_imeisv_bcd_is_valid(const char *imeisv_bcd)
+{
+    return ogs_bcd_string_is_valid(imeisv_bcd, OGS_MAX_IMEISV_BCD_LEN);
 }
 
 /*
@@ -419,27 +523,14 @@ int ogs_supi_to_imsi_bcd(
 
     *imsi_supi = false;
 
-    type = ogs_id_get_type(supi);
-    if (!type) {
-        ogs_error("ogs_id_get_type() failed [%s]", supi);
+    if (ogs_id_get_type_value(supi, &type, &value) == false) {
+        ogs_error("Invalid SUPI [%s]", supi);
         goto cleanup;
     }
 
     /* Non-IMSI SUPI is valid, but has no EPC IMSI alias. */
     if (strcmp(type, OGS_ID_SUPI_TYPE_IMSI) != 0) {
         rv = OGS_OK;
-        goto cleanup;
-    }
-
-    value = ogs_id_get_value(supi);
-    if (!value) {
-        ogs_error("No IMSI in SUPI [%s]", supi);
-        goto cleanup;
-    }
-
-    /* Reject extra '-' components that ogs_id_get_value() ignores. */
-    if (strlen(supi) != strlen(type) + 1 + strlen(value)) {
-        ogs_error("Invalid IMSI SUPI [%s]", supi);
         goto cleanup;
     }
 
@@ -483,6 +574,94 @@ ogs_uint24_t ogs_s_nssai_sd_from_string(const char *hex)
         return sd;
 
     return ogs_uint24_from_string_hexadecimal((char *)hex);
+}
+
+char *ogs_framed_route_build(const char *cidr)
+{
+    char *value = NULL;
+
+    ogs_assert(cidr);
+
+    /*
+     * RFC 2865 5.22 / RFC 3162 2.5: a gateway of 0.0.0.0 (or ::) means
+     * "use the user's own address"; Open5GS uses metric 1.
+     */
+    if (strchr(cidr, ':'))
+        value = ogs_msprintf("%s :: 1", cidr);
+    else
+        value = ogs_msprintf("%s 0.0.0.0 1", cidr);
+    ogs_assert(value);
+
+    return value;
+}
+
+char *ogs_framed_route_parse(const char *value, int length)
+{
+    const char *end = NULL;
+    char *cidr = NULL;
+
+    ogs_assert(value);
+
+    /* Prefix ends at the first space; gateway and metric are ignored. */
+    if (length > 0) {
+        end = memchr(value, ' ', length);
+        if (end)
+            length = end - value;
+    }
+
+    if (length <= 0) {
+        ogs_warn("Empty framed route prefix");
+        return NULL;
+    }
+
+    /* AVP/IE values are length-delimited, not NUL-terminated. */
+    if (memchr(value, '\0', length)) {
+        ogs_warn("NUL byte in framed route prefix");
+        return NULL;
+    }
+
+    cidr = ogs_strndup(value, length);
+    ogs_assert(cidr);
+
+    /*
+     * RFC 2865 5.22 defines classful defaults for IPv4 prefixes without
+     * a length. Validate the dotted-quad address before deriving one;
+     * there is no classful default for class D/E addresses.
+     * RFC 3162 2.5 also permits an omitted IPv6 prefix length, but does
+     * not define a default. Leave IPv6 prefixes unchanged; the caller
+     * interprets an omitted length and validates the resulting subnet.
+     */
+    if (!strchr(cidr, '/') && !strchr(cidr, ':')) {
+        ogs_sockaddr_t addr;
+        int first, bits;
+        char *classful = NULL;
+
+        if (ogs_inet_pton(AF_INET, cidr, &addr) != OGS_OK) {
+            ogs_warn("Invalid framed route IPv4 address [%s]", cidr);
+            ogs_free(cidr);
+            return NULL;
+        }
+
+        first = be32toh(addr.sin.sin_addr.s_addr) >> 24;
+        if (first < 128)
+            bits = 8;
+        else if (first < 192)
+            bits = 16;
+        else if (first < 224)
+            bits = 24;
+        else {
+            ogs_warn("No classful prefix length for IPv4 route [%s]", cidr);
+            ogs_free(cidr);
+            return NULL;
+        }
+
+        classful = ogs_msprintf("%s/%d", cidr, bits);
+        ogs_assert(classful);
+        ogs_free(cidr);
+        cidr = classful;
+    }
+
+    return cidr;
 }
 
 int ogs_fqdn_build(char *dst, const char *src, int length)
@@ -905,33 +1084,6 @@ int ogs_sockaddr_to_user_plane_ip_resource_info(
     return OGS_OK;
 }
 
-int ogs_user_plane_ip_resource_info_to_sockaddr(
-    ogs_user_plane_ip_resource_info_t *info,
-    ogs_sockaddr_t **addr, ogs_sockaddr_t **addr6)
-{
-    ogs_assert(addr && addr6);
-    ogs_assert(info);
-
-    *addr = NULL;
-    *addr6 = NULL;
-
-    if (info->v4) {
-        *addr = ogs_calloc(1, sizeof(**addr));
-        ogs_assert(*addr);
-        (*addr)->sin.sin_addr.s_addr = info->addr;
-        (*addr)->ogs_sa_family = AF_INET;
-    }
-
-    if (info->v6) {
-        *addr6 = ogs_calloc(1, sizeof(**addr6));
-        ogs_assert(*addr6);
-        memcpy((*addr6)->sin6.sin6_addr.s6_addr, info->addr6, OGS_IPV6_LEN);
-        (*addr6)->ogs_sa_family = AF_INET6;
-    }
-
-    return OGS_OK;
-}
-
 ogs_slice_data_t *ogs_slice_find_by_s_nssai(
         ogs_slice_data_t *slice_data, int num_of_slice_data,
         ogs_s_nssai_t *s_nssai)
@@ -1014,6 +1166,11 @@ static int flow_rx_to_gx(ogs_flow_t *rx_flow, ogs_flow_t *gx_flow)
     ogs_assert(rx_flow);
     ogs_assert(gx_flow);
 
+    if (!rx_flow->description) {
+        ogs_error("No Flow Description");
+        return OGS_ERROR;
+    }
+
     if (!strncmp(rx_flow->description,
                 "permit out", strlen("permit out"))) {
         gx_flow->direction = OGS_FLOW_DOWNLINK_ONLY;
@@ -1030,10 +1187,35 @@ static int flow_rx_to_gx(ogs_flow_t *rx_flow, ogs_flow_t *gx_flow)
         gx_flow->description = ogs_calloc(1, len);
         ogs_assert(gx_flow->description);
         strcpy(gx_flow->description, "permit out");
-        from_str = strstr(&rx_flow->description[strlen("permit in")], "from");
-        ogs_assert(from_str);
-        to_str = strstr(&rx_flow->description[strlen("permit in")], "to");
-        ogs_assert(to_str);
+
+        /*
+         * Match "from" and "to" as space-padded tokens, and ensure
+         * "to" follows "from" before using pointer-length arithmetic.
+         */
+        from_str = strstr(&rx_flow->description[strlen("permit in")],
+                " from ");
+        if (!from_str) {
+            ogs_error("Invalid Flow Description : [%s] (missing 'from')",
+                    rx_flow->description);
+            ogs_free(gx_flow->description);
+            gx_flow->description = NULL;
+            return OGS_ERROR;
+        }
+
+        to_str = strstr(&rx_flow->description[strlen("permit in")],
+                " to ");
+        if (!to_str || to_str <= from_str) {
+            ogs_error("Invalid Flow Description : [%s] "
+                    "(missing 'to' or 'to' precedes 'from')",
+                    rx_flow->description);
+            ogs_free(gx_flow->description);
+            gx_flow->description = NULL;
+            return OGS_ERROR;
+        }
+
+        from_str++;
+        to_str++;
+
         strncat(gx_flow->description,
             &rx_flow->description[strlen("permit in")],
             strlen(rx_flow->description) -
@@ -1280,4 +1462,38 @@ int ogs_pcc_rule_update_qos_from_media(
         pcc_rule->qos.gbr.uplink = pcc_rule->qos.mbr.uplink;
 
     return OGS_OK;
+}
+
+/* Returns true if any ARP field of the PCC rule was changed */
+bool ogs_pcc_rule_update_arp_from_media(
+        ogs_pcc_rule_t *pcc_rule, ogs_media_component_t *media_component)
+{
+    bool changed = false;
+
+    ogs_assert(pcc_rule);
+    ogs_assert(media_component);
+
+    if (media_component->arp.priority_level &&
+        media_component->arp.priority_level !=
+            pcc_rule->qos.arp.priority_level) {
+        pcc_rule->qos.arp.priority_level =
+            media_component->arp.priority_level;
+        changed = true;
+    }
+    if (media_component->arp.pre_emption_capability &&
+        media_component->arp.pre_emption_capability !=
+            pcc_rule->qos.arp.pre_emption_capability) {
+        pcc_rule->qos.arp.pre_emption_capability =
+            media_component->arp.pre_emption_capability;
+        changed = true;
+    }
+    if (media_component->arp.pre_emption_vulnerability &&
+        media_component->arp.pre_emption_vulnerability !=
+            pcc_rule->qos.arp.pre_emption_vulnerability) {
+        pcc_rule->qos.arp.pre_emption_vulnerability =
+            media_component->arp.pre_emption_vulnerability;
+        changed = true;
+    }
+
+    return changed;
 }
